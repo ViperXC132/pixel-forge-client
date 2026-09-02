@@ -3,6 +3,7 @@ package com.pixelforge.gui.screens;
 import com.pixelforge.account.AccountManager;
 import com.pixelforge.account.AccountManager.Account;
 import com.pixelforge.account.AccountManager.AccountType;
+import com.pixelforge.account.SessionApplier;
 import com.pixelforge.account.SkinHelper;
 import com.pixelforge.util.RenderUtil;
 import net.minecraft.client.gui.DrawContext;
@@ -13,15 +14,17 @@ import net.minecraft.text.Text;
 public class AccountsScreen extends Screen {
 
     private final Screen parent;
-    private TextFieldWidget input;
+    private TextFieldWidget userField;
+    private TextFieldWidget passField;
     private AccountType selectedType = AccountType.OFFLINE;
-    private String error = "";
+    private String status = "";
+    private boolean busy = false;
 
     private static final int ACCENT = 0xFF3B5BDB;
     private static final int TEXT = 0xFFC8D0E0;
     private static final int DIM = 0xFF8892A8;
     private static final int MUTED = 0xFF3D4A6A;
-    private static final int PANEL = 0xD0101424; // opaque-transparent Lunar
+    private static final int PANEL = 0xD0101424;
 
     public AccountsScreen(Screen parent) {
         super(Text.literal("Accounts"));
@@ -30,29 +33,34 @@ public class AccountsScreen extends Screen {
 
     @Override
     protected void init() {
-        input = new TextFieldWidget(textRenderer, 20, 180, width - 40, 18, Text.literal("Username"));
-        input.setPlaceholder(Text.literal("Username / email"));
-        addSelectableChild(input);
+        userField = new TextFieldWidget(textRenderer, 20, 0, width - 40, 18, Text.literal("User"));
+        userField.setPlaceholder(Text.literal("Username / email"));
+        userField.setMaxLength(64);
+        addSelectableChild(userField);
+
+        passField = new TextFieldWidget(textRenderer, 20, 0, width - 40, 18, Text.literal("Pass"));
+        passField.setPlaceholder(Text.literal("Password (empty for Offline)"));
+        passField.setMaxLength(128);
+        // Mask password visually by using a simple render — TextFieldWidget doesn't always expose setRenderTextProvider on all versions
+        addSelectableChild(passField);
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        // Lunar dim — still see through slightly
         RenderUtil.fill(context, 0, 0, width, height, 0xB0080A12);
 
         RenderUtil.fill(context, 0, 0, width, 32, 0xE00A0C14);
         RenderUtil.drawText(context, textRenderer, "Accounts", 14, 11, TEXT, false);
+        RenderUtil.drawText(context, textRenderer, "Active: " + SessionApplier.currentUsername(), 120, 11, 0xFF748FFF, false);
 
-        RenderUtil.drawText(context, textRenderer, "YOUR ACCOUNTS", 16, 44, ACCENT, false);
+        RenderUtil.drawText(context, textRenderer, "SAVED ACCOUNTS — click Switch to apply session", 16, 42, ACCENT, false);
 
-        int y = 58;
+        int y = 56;
         for (Account acc : AccountManager.getAccounts()) {
             RenderUtil.fill(context, 16, y, width - 16, y + 30, PANEL);
             RenderUtil.drawBorder(context, 16, y, width - 32, 30, 0xFF1E2540);
 
-            // Real skin head preview
             SkinHelper.drawHead(context, acc.username, 22, y + 5, 20);
-
             RenderUtil.drawText(context, textRenderer, acc.username, 48, y + 5, TEXT, false);
             RenderUtil.drawText(context, textRenderer,
                     acc.type.displayName + (acc.active ? " · Active" : ""),
@@ -66,77 +74,103 @@ public class AccountsScreen extends Screen {
             y += 34;
         }
 
-        y += 8;
-        RenderUtil.drawText(context, textRenderer, "ADD ACCOUNT", 16, y, ACCENT, false);
+        y += 6;
+        RenderUtil.drawText(context, textRenderer, "LOGIN / ADD", 16, y, ACCENT, false);
         y += 14;
 
-        drawTypeBtn(context, 16, y, "Microsoft", selectedType == AccountType.MICROSOFT);
-        drawTypeBtn(context, 90, y, "ely.by", selectedType == AccountType.ELYBY);
-        drawTypeBtn(context, 145, y, "LittleSkin", selectedType == AccountType.LITTLESKIN);
-        drawTypeBtn(context, 220, y, "Offline", selectedType == AccountType.OFFLINE);
+        drawTypeBtn(context, 16, y, "Offline", selectedType == AccountType.OFFLINE);
+        drawTypeBtn(context, 70, y, "ely.by", selectedType == AccountType.ELYBY);
+        drawTypeBtn(context, 125, y, "LittleSkin", selectedType == AccountType.LITTLESKIN);
+        drawTypeBtn(context, 200, y, "Microsoft", selectedType == AccountType.MICROSOFT);
 
-        input.setY(y + 22);
-        input.render(context, mouseX, mouseY, delta);
+        userField.setY(y + 20);
+        passField.setY(y + 42);
+        userField.render(context, mouseX, mouseY, delta);
+        passField.render(context, mouseX, mouseY, delta);
 
-        // Live head preview for typed name
-        String typed = input.getText().trim();
+        String typed = userField.getText().trim();
         if (!typed.isEmpty()) {
-            SkinHelper.drawHead(context, typed, width - 48, y + 20, 24);
+            SkinHelper.drawHead(context, typed, width - 48, y + 24, 24);
         }
 
-        RenderUtil.fill(context, 20, y + 48, width - 20, y + 66, 0x403B5BDB);
-        RenderUtil.drawBorder(context, 20, y + 48, width - 40, 18, ACCENT);
-        RenderUtil.drawCenteredText(context, textRenderer, "+ Add account", width / 2, y + 53, 0xFF748FFF, false);
+        int by = y + 68;
+        RenderUtil.fill(context, 20, by, width - 20, by + 18, busy ? 0x40333333 : 0x403B5BDB);
+        RenderUtil.drawBorder(context, 20, by, width - 40, 18, busy ? MUTED : ACCENT);
+        RenderUtil.drawCenteredText(context, textRenderer,
+                busy ? "Logging in..." : "Login & Apply Session",
+                width / 2, by + 5, busy ? DIM : 0xFF748FFF, false);
 
-        if (!error.isEmpty()) {
-            RenderUtil.drawText(context, textRenderer, error, 20, y + 72, 0xFFFA5252, false);
+        if (!status.isEmpty()) {
+            int sc = status.startsWith("OK:") ? 0xFF40C057 : 0xFFFA5252;
+            String show = status.startsWith("OK:") ? status.substring(3) : status;
+            RenderUtil.drawText(context, textRenderer, show, 20, by + 24, sc, false);
         }
 
-        RenderUtil.drawText(context, textRenderer, "ESC back", 12, height - 14, MUTED, false);
+        RenderUtil.drawText(context, textRenderer,
+                "Offline: username only  ·  ely.by / LittleSkin: user + password  ·  2FA: password:CODE",
+                12, height - 14, MUTED, false);
+
         super.render(context, mouseX, mouseY, delta);
     }
 
     private void drawTypeBtn(DrawContext context, int x, int y, String label, boolean on) {
-        int c = on ? 0xFF748FFF : MUTED;
-        int b = on ? ACCENT : 0xFF1E2540;
         int tw = textRenderer.getWidth(label) + 12;
         RenderUtil.fill(context, x, y, x + tw, y + 14, on ? 0x303B5BDB : PANEL);
-        RenderUtil.drawBorder(context, x, y, tw, 14, b);
-        RenderUtil.drawText(context, textRenderer, label, x + 6, y + 3, c, false);
+        RenderUtil.drawBorder(context, x, y, tw, 14, on ? ACCENT : 0xFF1E2540);
+        RenderUtil.drawText(context, textRenderer, label, x + 6, y + 3, on ? 0xFF748FFF : MUTED, false);
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        int y = 58;
+        int y = 56;
         for (Account acc : AccountManager.getAccounts()) {
             if (!acc.active && mouseX >= width - 70 && mouseX <= width - 16 && mouseY >= y && mouseY <= y + 30) {
                 AccountManager.switchTo(acc);
+                status = "OK:Switched to " + acc.username;
                 return true;
             }
             y += 34;
         }
 
-        y += 22;
+        y += 20;
         if (mouseY >= y && mouseY <= y + 14) {
-            if (mouseX >= 16 && mouseX < 85) { selectedType = AccountType.MICROSOFT; return true; }
-            if (mouseX >= 90 && mouseX < 140) { selectedType = AccountType.ELYBY; return true; }
-            if (mouseX >= 145 && mouseX < 215) { selectedType = AccountType.LITTLESKIN; return true; }
-            if (mouseX >= 220 && mouseX < 275) { selectedType = AccountType.OFFLINE; return true; }
+            if (mouseX >= 16 && mouseX < 65) { selectedType = AccountType.OFFLINE; return true; }
+            if (mouseX >= 70 && mouseX < 120) { selectedType = AccountType.ELYBY; return true; }
+            if (mouseX >= 125 && mouseX < 195) { selectedType = AccountType.LITTLESKIN; return true; }
+            if (mouseX >= 200 && mouseX < 270) { selectedType = AccountType.MICROSOFT; return true; }
         }
 
-        if (mouseY >= y + 48 && mouseY <= y + 66 && mouseX >= 20 && mouseX <= width - 20) {
-            String name = input.getText().trim();
-            if (name.isEmpty()) {
-                error = "Enter a username first.";
+        int by = y + 68;
+        if (!busy && mouseY >= by && mouseY <= by + 18 && mouseX >= 20 && mouseX <= width - 20) {
+            String user = userField.getText().trim();
+            String pass = passField.getText();
+            if (user.isEmpty()) {
+                status = "Enter a username";
                 return true;
             }
-            error = "";
-            AccountManager.add(name, selectedType);
-            input.setText("");
+            if (selectedType == AccountType.MICROSOFT) {
+                status = "Microsoft needs browser OAuth — use Offline / ely.by / LittleSkin";
+                return true;
+            }
+            if (selectedType != AccountType.OFFLINE && (pass == null || pass.isEmpty())) {
+                status = "Password required for " + selectedType.displayName;
+                return true;
+            }
+            busy = true;
+            status = "Authenticating...";
+            AccountManager.loginAsync(selectedType, user, pass == null ? "" : pass, msg -> {
+                busy = false;
+                status = msg;
+                if (msg.startsWith("OK:")) {
+                    passField.setText("");
+                }
+            });
             return true;
         }
 
-        return input.mouseClicked(mouseX, mouseY, button) || super.mouseClicked(mouseX, mouseY, button);
+        return userField.mouseClicked(mouseX, mouseY, button)
+                || passField.mouseClicked(mouseX, mouseY, button)
+                || super.mouseClicked(mouseX, mouseY, button);
     }
 
     @Override
@@ -145,12 +179,16 @@ public class AccountsScreen extends Screen {
             client.setScreen(parent);
             return true;
         }
-        return input.keyPressed(keyCode, scanCode, modifiers) || super.keyPressed(keyCode, scanCode, modifiers);
+        return userField.keyPressed(keyCode, scanCode, modifiers)
+                || passField.keyPressed(keyCode, scanCode, modifiers)
+                || super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
     public boolean charTyped(char chr, int modifiers) {
-        return input.charTyped(chr, modifiers) || super.charTyped(chr, modifiers);
+        return userField.charTyped(chr, modifiers)
+                || passField.charTyped(chr, modifiers)
+                || super.charTyped(chr, modifiers);
     }
 
     @Override

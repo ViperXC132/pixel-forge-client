@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.pixelforge.PixelForgeClient;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.MinecraftClient;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
@@ -13,17 +14,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
-/**
- * Local account list for Offline / ely.by / LittleSkin / Microsoft (label only for MS for now).
- * Full Microsoft OAuth requires browser flow and is intentionally not auto-completed here.
- * Offline accounts work immediately for local play.
- */
 public final class AccountManager {
 
     public enum AccountType {
-        MICROSOFT("Microsoft · Premium"),
-        ELYBY("ely.by · Cracked"),
+        MICROSOFT("Microsoft"),
+        ELYBY("ely.by"),
         LITTLESKIN("LittleSkin"),
         OFFLINE("Offline");
 
@@ -35,13 +33,17 @@ public final class AccountManager {
         public String username;
         public AccountType type;
         public boolean active;
+        public String uuid;
+        public String accessToken; // stored for re-apply; offline uses "0"
 
         public Account() {}
 
-        public Account(String username, AccountType type, boolean active) {
+        public Account(String username, AccountType type, boolean active, String uuid, String accessToken) {
             this.username = username;
             this.type = type;
             this.active = active;
+            this.uuid = uuid;
+            this.accessToken = accessToken;
         }
     }
 
@@ -52,9 +54,17 @@ public final class AccountManager {
     static {
         load();
         if (ACCOUNTS.isEmpty()) {
-            // Seed with current session name if possible
-            ACCOUNTS.add(new Account("Player", AccountType.OFFLINE, true));
-            save();
+            String name = "Player";
+            try {
+                if (MinecraftClient.getInstance() != null && MinecraftClient.getInstance().getSession() != null) {
+                    name = MinecraftClient.getInstance().getSession().getUsername();
+                }
+            } catch (Exception ignored) {}
+            AuthService.AuthResult offline = AuthService.login(AccountType.OFFLINE, name, "");
+            if (offline.ok) {
+                ACCOUNTS.add(new Account(offline.username, AccountType.OFFLINE, true, offline.uuid, offline.accessToken));
+                save();
+            }
         }
     }
 
@@ -64,14 +74,56 @@ public final class AccountManager {
         return Collections.unmodifiableList(ACCOUNTS);
     }
 
-    public static void add(String username, AccountType type) {
-        for (Account a : ACCOUNTS) a.active = false;
-        ACCOUNTS.add(new Account(username, type, true));
-        save();
-        PixelForgeClient.LOGGER.info("Added account {} ({})", username, type);
+    /** Login with username+password (or username only for offline), then apply session. */
+    public static void loginAsync(AccountType type, String username, String password, Consumer<String> callback) {
+        CompletableFuture.runAsync(() -> {
+            AuthService.AuthResult result = AuthService.login(type, username, password);
+            MinecraftClient.getInstance().execute(() -> {
+                if (!result.ok) {
+                    callback.accept(result.message);
+                    return;
+                }
+                boolean applied = SessionApplier.apply(result.username, result.uuid, result.accessToken, result.type);
+                if (!applied) {
+                    callback.accept("Auth OK but failed to apply session");
+                    return;
+                }
+                for (Account a : ACCOUNTS) a.active = false;
+                // update existing or add
+                Account existing = null;
+                for (Account a : ACCOUNTS) {
+                    if (a.username.equalsIgnoreCase(result.username) && a.type == result.type) {
+                        existing = a;
+                        break;
+                    }
+                }
+                if (existing != null) {
+                    existing.active = true;
+                    existing.uuid = result.uuid;
+                    existing.accessToken = result.accessToken;
+                } else {
+                    ACCOUNTS.add(new Account(result.username, result.type, true, result.uuid, result.accessToken));
+                }
+                save();
+                PixelForgeClient.getInstance().getNotificationManager()
+                        .push("Logged in as " + result.username, 0xFF40C057);
+                callback.accept("OK:" + result.username);
+            });
+        });
     }
 
     public static void switchTo(Account account) {
+        if (account.uuid == null || account.accessToken == null) {
+            PixelForgeClient.getInstance().getNotificationManager()
+                    .push("Re-login required for " + account.username, 0xFFFFAA00);
+            return;
+        }
+        boolean ok = SessionApplier.apply(account.username, account.uuid, account.accessToken, account.type);
+        if (!ok) {
+            PixelForgeClient.getInstance().getNotificationManager()
+                    .push("Failed to switch session", 0xFFFF5555);
+            return;
+        }
         for (Account a : ACCOUNTS) a.active = (a == account);
         save();
         PixelForgeClient.getInstance().getNotificationManager()
