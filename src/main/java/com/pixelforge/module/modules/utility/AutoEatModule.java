@@ -2,8 +2,8 @@ package com.pixelforge.module.modules.utility;
 
 import com.pixelforge.module.Category;
 import com.pixelforge.module.Module;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.ItemStack;
-import net.minecraft.util.Hand;
 
 public class AutoEatModule extends Module {
 
@@ -21,7 +21,7 @@ public class AutoEatModule extends Module {
 
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack.getItem().getComponents().contains(net.minecraft.component.DataComponentTypes.FOOD)) {
+            if (stack.contains(DataComponentTypes.FOOD)) {
                 mc.player.getInventory().selectedSlot = i;
                 mc.options.useKey.setPressed(true);
                 return;

@@ -6,9 +6,13 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public class KeybindManager {
 
     private final MinecraftClient mc = MinecraftClient.getInstance();
+    private final Map<Integer, Boolean> previousStates = new HashMap<>();
 
     public void init() {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -18,18 +22,21 @@ public class KeybindManager {
 
             for (Module module : PixelForgeClient.getInstance().getModuleManager().getModules()) {
                 int key = module.getKeybind();
-                if (key == -1 || key == 0) continue;
+                if (key <= 0) continue;
 
-                if (GLFW.glfwGetKey(window, key) == GLFW.GLFW_PRESS) {
-                    // Simple edge detection would be better, but for now we use a basic toggle on press
-                    // Real implementation should track previous state
+                boolean down = GLFW.glfwGetKey(window, key) == GLFW.GLFW_PRESS;
+                boolean wasDown = previousStates.getOrDefault(key, false);
+
+                if (down && !wasDown) {
+                    module.toggle();
                 }
+                previousStates.put(key, down);
             }
         });
     }
 
     public static String getKeyName(int key) {
-        if (key == -1 || key == 0) return "None";
+        if (key <= 0) return "None";
         String name = GLFW.glfwGetKeyName(key, 0);
         if (name != null) return name.toUpperCase();
         return switch (key) {
@@ -41,6 +48,7 @@ public class KeybindManager {
             case GLFW.GLFW_KEY_RIGHT_ALT -> "RALT";
             case GLFW.GLFW_KEY_TAB -> "TAB";
             case GLFW.GLFW_KEY_CAPS_LOCK -> "CAPS";
+            case GLFW.GLFW_KEY_RIGHT_SHIFT -> "RSHIFT";
             default -> "KEY" + key;
         };
     }
