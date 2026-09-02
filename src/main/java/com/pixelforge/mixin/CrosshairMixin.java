@@ -18,7 +18,8 @@ public class CrosshairMixin {
         if (PixelForgeClient.getInstance() == null) return;
 
         CustomCrosshairModule module = PixelForgeClient.getInstance()
-                .getModuleManager().getModule(CustomCrosshairModule.class);
+                .getModuleManager()
+                .getModule(CustomCrosshairModule.class);
 
         if (module != null && module.shouldReplaceVanilla()) {
             int cx = context.getScaledWindowWidth() / 2;

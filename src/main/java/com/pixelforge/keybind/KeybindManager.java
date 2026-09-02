@@ -11,7 +11,6 @@ import java.util.Map;
 
 public class KeybindManager {
 
-    private final MinecraftClient mc = MinecraftClient.getInstance();
     private final Map<Integer, Boolean> previousStates = new HashMap<>();
 
     public void init() {
@@ -48,7 +47,6 @@ public class KeybindManager {
             case GLFW.GLFW_KEY_RIGHT_ALT -> "RALT";
             case GLFW.GLFW_KEY_TAB -> "TAB";
             case GLFW.GLFW_KEY_CAPS_LOCK -> "CAPS";
-            case GLFW.GLFW_KEY_RIGHT_SHIFT -> "RSHIFT";
             default -> "KEY" + key;
         };
     }

@@ -1,6 +1,7 @@
 package com.pixelforge;
 
 import com.pixelforge.config.ConfigManager;
+import com.pixelforge.config.ProfileManager;
 import com.pixelforge.event.EventBus;
 import com.pixelforge.keybind.KeybindManager;
 import com.pixelforge.module.ModuleManager;
@@ -38,16 +39,16 @@ public class PixelForgeClient implements ClientModInitializer {
         this.hudRenderer = new HudRenderer();
         this.notificationManager = new NotificationManager();
 
-        // Register all modules
         moduleManager.init();
-
-        // Load configs after modules exist
         configManager.loadAll();
-
-        // Keybinds
         keybindManager.init();
 
-        // Events
+        // Apply default profile on first launch if nothing is enabled
+        boolean anyEnabled = moduleManager.getModules().stream().anyMatch(m -> m.isEnabled() && m.getCategory() != com.pixelforge.module.Category.SYSTEM);
+        if (!anyEnabled) {
+            ProfileManager.loadProfile("Default");
+        }
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player != null) {
                 moduleManager.onTick();
@@ -60,7 +61,7 @@ public class PixelForgeClient implements ClientModInitializer {
             notificationManager.render(graphics);
         });
 
-        LOGGER.info("PixelForge initialized successfully with {} modules", moduleManager.getModules().size());
+        LOGGER.info("PixelForge ready — {} modules loaded", moduleManager.getModules().size());
     }
 
     public static PixelForgeClient getInstance() {
